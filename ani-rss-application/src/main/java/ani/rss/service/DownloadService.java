@@ -59,6 +59,16 @@ public class DownloadService {
         Integer delayedDownload = CONFIG.getDelayedDownload();
         Boolean deleteStandbyRSSOnly = CONFIG.getDeleteStandbyRSSOnly();
 
+        // 生成 bangumi.ini 不依赖自动刮削
+        if (Boolean.TRUE.equals(CONFIG.getBangumiIniEnabled())) {
+            try {
+                scrapeService.saveBangumiIni(ani, false);
+            } catch (Exception e) {
+                log.error("生成bangumi.ini失败 {}", ani.getTitle());
+                log.error(e.getMessage(), e);
+            }
+        }
+
         String title = ani.getTitle();
         Integer season = ani.getSeason();
         Boolean downloadNew = ani.getDownloadNew();
@@ -466,6 +476,15 @@ public class DownloadService {
                 scrapeService.scrape(ani, false);
             } catch (Exception e) {
                 log.error("刮削失败: {}", ani.getTitle());
+                log.error(e.getMessage(), e);
+            }
+        }
+        // 下载完成后确保 bangumi.ini 已生成 目录可能随时被移走
+        if (Boolean.TRUE.equals(CONFIG.getBangumiIniEnabled())) {
+            try {
+                scrapeService.saveBangumiIni(ani, false);
+            } catch (Exception e) {
+                log.error("生成bangumi.ini失败 {}", ani.getTitle());
                 log.error(e.getMessage(), e);
             }
         }
