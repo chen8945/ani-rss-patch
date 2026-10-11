@@ -1,0 +1,4 @@
+interface:
+  display_name: "维护 ani-rss 补丁"
+  short_description: "按 PATCHES.md 契约适配或再生版本命名补丁"
+  default_prompt: "Use $maintaining-ani-rss-patches to adapt patches/ to the new upstream release following PATCHES.md."

@@ -1,0 +1,150 @@
+name: sync-build
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每天检查一次上游新版本 (北京时间 02:23)
+    - cron: '23 18 * * *'
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: sync-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 检查上游新版本
+        run: |
+          UPSTREAM=$(gh api repos/wushuo894/ani-rss/releases/latest --jq .tag_name)
+          MINE=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null || true)
+          echo "上游最新: ${UPSTREAM:-无} 本仓库最新: ${MINE:-无}"
+          if [ "$UPSTREAM" = "$MINE" ]; then
+            echo "已是最新版本 $MINE 无需构建"
+            echo "SKIP=true" >> $GITHUB_ENV
+          else
+            echo "version=$UPSTREAM" >> $GITHUB_ENV
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 检出上游版本并应用补丁
+        if: env.SKIP != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/wushuo894/ani-rss
+          git fetch upstream --tags
+
+          # 补丁暂存到仓库外 避免checkout上游tag后混入patch分支
+          cp -r patches /tmp/patches
+
+          git checkout -B patch "$version"
+
+          # 从新到旧尝试应用 取第一个可用的 (补丁命名=适用起始版本)
+          APPLIED=""
+          for p in $(ls /tmp/patches/v*.patch | sort -rV); do
+            if git apply --check "$p"; then
+              APPLIED="$p"
+              git apply "$p"
+              break
+            fi
+          done
+          if [ -z "$APPLIED" ]; then
+            echo "::error::所有补丁均无法应用到 $version 需要人工适配新补丁"
+            exit 1
+          fi
+          echo "使用补丁: $(basename "$APPLIED")"
+
+          git add -A
+          git commit -m "$version"
+          # 上游同名tag已随--tags拉入(指向上游提交) 本仓库版本tag须指向补丁提交 先删后建
+          git tag -d "$version"
+          git tag "$version"
+
+      - name: 推送分支与标签
+        if: env.SKIP != 'true'
+        run: |
+          # 先强推tag(重指向补丁提交) 连同上游对象一起送上去 供patch分支推送复用
+          git push --force origin "$version"
+          git push origin refs/remotes/upstream/main:refs/heads/ani-rss
+          git push origin patch --force
+
+      - name: 安装 JDK 25
+        if: env.SKIP != 'true'
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 构建 jar/exe
+        if: env.SKIP != 'true'
+        run: bash ./package.sh
+
+      - name: 发布 Release
+        if: env.SKIP != 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          name: ${{ env.version }}
+          tag_name: ${{ env.version }}
+          body: 基于 [wushuo894/ani-rss](https://github.com/wushuo894/ani-rss) ${{ env.version }} 自动构建 包含本仓库补丁
+          body_path: UPDATE.md
+          append_body: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            ./ani-rss-application/target/ani-rss.jar
+            ./ani-rss-application/target/ani-rss.exe
+
+      - name: 安装 QEMU
+        if: env.SKIP != 'true'
+        uses: docker/setup-qemu-action@v4
+
+      - name: 安装 Docker Buildx
+        if: env.SKIP != 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: 登录 ghcr.io
+        if: env.SKIP != 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送 Docker 镜像 (temurin)
+        if: env.SKIP != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./
+          file: ./docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/chen8945/ani-rss:latest
+            ghcr.io/chen8945/ani-rss:${{ env.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 构建并推送 Docker 镜像 (openj9)
+        if: env.SKIP != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./
+          file: ./docker/Dockerfile-openj9
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/chen8945/ani-rss:openj9
+            ghcr.io/chen8945/ani-rss:${{ env.version }}-openj9
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
