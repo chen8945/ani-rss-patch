@@ -53,3 +53,15 @@
 涉及：`RssView.vue`
 
 `rssSleepMinutes` 输入框 `:min` 由 10 改为 1。
+
+## 组 6：通知标题与 Bangumi ID 变量
+
+涉及：`BaseNotification.replaceNotificationTemplate`
+
+1. 通知变量 `${title}`、`${themoviedbName}` 仅剥离 `StringEnum.TMDB_ID_REG` 匹配的 `[tmdbid=数字]` / `{tmdb-数字}`，保留年份及其他标题内容，不受重命名剔除选项影响。
+2. 只处理变量替换值，不修改 `Ani` 数据、文件命名或实际下载路径；`${text}`、`${downloadPath}`、`${tmdbid}` 维持原有语义，邮件主题等独立标题不在本组范围内。
+3. 新增小写 `${bgmid}`：仅从已保存的 `Ani.bgmUrl` 提取 Bangumi 条目 ID，不触发额外网络请求、不修改订阅；支持任意域名或主机的 HTTP(S) `/subject/数字` 链接，可带端口、尾斜杠、查询参数和片段。缺失或不匹配时替换为空字符串。
+4. 全局模板、自定义模板及 `${notification}` 嵌套模板统一生效；Shell/WebHook 共用此替换器，依赖旧标题拼路径的模板需相应调整。
+5. 变量说明仅记录于本文档，不改通知设置界面和默认模板；捐赠验证不变。
+
+复用边界：TMDB 清理复用上游 `StringEnum.TMDB_ID_REG`，不调用同时处理年份和重命名设置的 `RenameUtil.renameDel`。Bangumi ID 不直接复用 `BgmUtil.getSubjectId`：字符串重载对缺失或不支持的链接抛异常，订阅重载还可能联网补全并修改订阅；通知变量保持本地提取、缺失留空。

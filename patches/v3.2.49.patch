@@ -1,0 +1,470 @@
+diff --git a/ani-rss-application/src/main/java/ani/rss/download/qBittorrent.java b/ani-rss-application/src/main/java/ani/rss/download/qBittorrent.java
+index 3fb538bc..fe5c4a65 100644
+--- a/ani-rss-application/src/main/java/ani/rss/download/qBittorrent.java
++++ b/ani-rss-application/src/main/java/ani/rss/download/qBittorrent.java
+@@ -83,6 +83,7 @@ public class qBittorrent implements BaseDownload {
+     @Override
+     public Boolean login(Boolean test, Config config) {
+         String host = config.getDownloadToolHost();
++        String username = config.getDownloadToolUsername();
+         String password = config.getDownloadToolPassword();
+ 
+         if (StrUtil.isBlank(host) || StrUtil.isBlank(password)) {
+@@ -90,16 +91,49 @@ public class qBittorrent implements BaseDownload {
+             return false;
+         }
+ 
+-        if (!password.startsWith("qbt_")) {
+-            log.warn("qBittorrent 未正确配置 ApiKey");
++        if (password.startsWith("qbt_")) {
++            // ApiKey 认证 (上游行为) qBittorrent 的 ApiKey 固定以 qbt_ 开头
++            try {
++                // 校验当前登录状态
++                return HttpReq.post(host + "/api/v2/app/version")
++                        .header(Header.AUTHORIZATION, "Bearer " + password)
++                        .thenFunction(HttpResponse::isOk);
++            } catch (Exception e) {
++                String message = ExceptionUtils.getMessage(e);
++                log.error("登录 qBittorrent 失败 {}", message);
++            }
++            return false;
++        }
++
++        // 账号密码认证 还原上游移除的登录方式 兼容未升级ApiKey的老版本qBittorrent
++        if (StrUtil.isBlank(username)) {
++            log.warn("qBittorrent 未配置用户名或ApiKey");
+             return false;
+         }
+ 
+         try {
+-            // 校验当前登录状态
+-            return HttpReq.post(host + "/api/v2/app/version")
+-                    .header(Header.AUTHORIZATION, "Bearer " + password)
+-                    .thenFunction(HttpResponse::isOk);
++            if (!test) {
++                // 校验当前登录状态
++                Boolean isOk = HttpReq.post(host + "/api/v2/app/version")
++                        .thenFunction(HttpResponse::isOk);
++                if (isOk) {
++                    return true;
++                }
++            }
++
++            return HttpReq.post(host + "/api/v2/auth/login")
++                    .form("username", username)
++                    .form("password", password)
++                    .disableCookie()
++                    .thenFunction(res -> {
++                        HttpReq.assertStatus(res);
++                        String body = res.body();
++                        if (StrUtil.isBlank(body)) {
++                            // 在 5.2.0 后登录会响应空 body
++                            return true;
++                        }
++                        return "Ok.".equalsIgnoreCase(body);
++                    });
+         } catch (Exception e) {
+             String message = ExceptionUtils.getMessage(e);
+             log.error("登录 qBittorrent 失败 {}", message);
+@@ -493,16 +527,25 @@ public class qBittorrent implements BaseDownload {
+ 
+     public static HttpRequest postApi(String path) {
+         String downloadToolHost = CONFIG.getDownloadToolHost();
+-        String downloadToolPassword = CONFIG.getDownloadToolPassword();
+-        return HttpReq.post(downloadToolHost + path)
+-                .header(Header.AUTHORIZATION, "Bearer " + downloadToolPassword);
++        return addAuth(HttpReq.post(downloadToolHost + path));
+     }
+ 
+     public static HttpRequest getApi(String path) {
+         String downloadToolHost = CONFIG.getDownloadToolHost();
+-        String downloadToolPassword = CONFIG.getDownloadToolPassword();
+-        return HttpReq.get(downloadToolHost + path)
+-                .header(Header.AUTHORIZATION, "Bearer " + downloadToolPassword);
++        return addAuth(HttpReq.get(downloadToolHost + path));
++    }
++
++    /**
++     * 附加认证
++     * ApiKey 固定以 qbt_ 开头 使用 Bearer 认证
++     * 账号密码模式 依赖登录后的会话Cookie 由全局CookieManager自动携带 不附加请求头
++     */
++    private static HttpRequest addAuth(HttpRequest req) {
++        String password = CONFIG.getDownloadToolPassword();
++        if (StrUtil.isNotBlank(password) && password.startsWith("qbt_")) {
++            return req.header(Header.AUTHORIZATION, "Bearer " + password);
++        }
++        return req;
+     }
+ 
+ }
+diff --git a/ani-rss-application/src/main/java/ani/rss/notification/BaseNotification.java b/ani-rss-application/src/main/java/ani/rss/notification/BaseNotification.java
+index ad7d88f4..4b4db6b3 100644
+--- a/ani-rss-application/src/main/java/ani/rss/notification/BaseNotification.java
++++ b/ani-rss-application/src/main/java/ani/rss/notification/BaseNotification.java
+@@ -108,11 +108,15 @@ public interface BaseNotification {
+         notificationTemplate = notificationTemplate.replace("${month}", String.valueOf(month));
+         notificationTemplate = notificationTemplate.replace("${date}", String.valueOf(date));
+ 
++        // 通知标题仅剥离 TMDB ID，保留年份；不改订阅名称和实际下载路径。
++        notificationTemplate = notificationTemplate.replace("${title}",
++                ReUtil.replaceAll(StrUtil.nullToEmpty(ani.getTitle()), StringEnum.TMDB_ID_REG, ""));
++        notificationTemplate = notificationTemplate.replace("${themoviedbName}",
++                ReUtil.replaceAll(StrUtil.nullToEmpty(ani.getThemoviedbName()), StringEnum.TMDB_ID_REG, ""));
++
+         List<Func1<Ani, Object>> list = List.of(
+-                Ani::getTitle,
+                 Ani::getScore,
+                 Ani::getSeason,
+-                Ani::getThemoviedbName,
+                 Ani::getBgmUrl,
+                 Ani::getCurrentEpisodeNumber,
+                 Ani::getTotalEpisodeNumber,
+@@ -132,6 +136,11 @@ public interface BaseNotification {
+                 .orElse("");
+         notificationTemplate = notificationTemplate.replace("${tmdbid}", tmdbId);
+ 
++        // Bangumi ID 仅从已保存的条目链接提取，缺失时留空，不额外请求网络。
++        String bgmId = ReUtil.get("(?i)^https?://[^/?#\\s]+/subject/([0-9]+)/?(?:[?#].*)?$",
++                StrUtil.nullToEmpty(ani.getBgmUrl()).trim(), 1);
++        notificationTemplate = notificationTemplate.replace("${bgmid}", StrUtil.nullToEmpty(bgmId));
++
+         String tmdbUrl = "";
+         if (StrUtil.isNotBlank(tmdbId)) {
+             Boolean ova = Opt.ofNullable(ani)
+diff --git a/ani-rss-application/src/main/java/ani/rss/service/DownloadService.java b/ani-rss-application/src/main/java/ani/rss/service/DownloadService.java
+index 6dbf150f..a3b90357 100644
+--- a/ani-rss-application/src/main/java/ani/rss/service/DownloadService.java
++++ b/ani-rss-application/src/main/java/ani/rss/service/DownloadService.java
+@@ -59,6 +59,16 @@ public class DownloadService {
+         Integer delayedDownload = CONFIG.getDelayedDownload();
+         Boolean deleteStandbyRSSOnly = CONFIG.getDeleteStandbyRSSOnly();
+ 
++        // 生成 bangumi.ini 不依赖自动刮削
++        if (Boolean.TRUE.equals(CONFIG.getBangumiIniEnabled())) {
++            try {
++                scrapeService.saveBangumiIni(ani, false);
++            } catch (Exception e) {
++                log.error("生成bangumi.ini失败 {}", ani.getTitle());
++                log.error(e.getMessage(), e);
++            }
++        }
++
+         String title = ani.getTitle();
+         Integer season = ani.getSeason();
+         Boolean downloadNew = ani.getDownloadNew();
+@@ -469,6 +479,15 @@ public class DownloadService {
+                 log.error(e.getMessage(), e);
+             }
+         }
++        // 下载完成后确保 bangumi.ini 已生成 目录可能随时被移走
++        if (Boolean.TRUE.equals(CONFIG.getBangumiIniEnabled())) {
++            try {
++                scrapeService.saveBangumiIni(ani, false);
++            } catch (Exception e) {
++                log.error("生成bangumi.ini失败 {}", ani.getTitle());
++                log.error(e.getMessage(), e);
++            }
++        }
+         String text = StrFormatter.format("{} 下载完成", name);
+         if (tags.contains(TorrentsTagEnum.STANDBY_RSS.getValue())) {
+             text = StrFormatter.format("(备用RSS) {}", text);
+diff --git a/ani-rss-application/src/main/java/ani/rss/service/ScrapeService.java b/ani-rss-application/src/main/java/ani/rss/service/ScrapeService.java
+index d9fb12b5..579572dc 100644
+--- a/ani-rss-application/src/main/java/ani/rss/service/ScrapeService.java
++++ b/ani-rss-application/src/main/java/ani/rss/service/ScrapeService.java
+@@ -12,6 +12,7 @@ import ani.rss.util.other.TmdbUtils;
+ import cn.hutool.core.collection.CollUtil;
+ import cn.hutool.core.date.DateUtil;
+ import cn.hutool.core.io.FileUtil;
++import cn.hutool.core.text.StrFormatter;
+ import cn.hutool.core.util.ReUtil;
+ import cn.hutool.core.util.StrUtil;
+ import jakarta.annotation.Resource;
+@@ -333,43 +334,84 @@ public class ScrapeService {
+         log.info("已保存图片 {}", saveFile);
+     }
+ 
++    /**
++     * 季目录 bangumi.ini 内容格式
++     */
++    private static final String BANGUMI_INI_SEASON = """
++            [Bangumi]
++            id={}
++            offset={}
++            """;
++
++    /**
++     * 顶层 bangumi.ini 内容格式
++     */
++    private static final String BANGUMI_INI_ROOT = """
++            [Bangumi]
++            id={}
++            """;
++
+     /**
+      * 保存 bangumi.ini
++     * 顶层保存整剧条目 id, 季目录保存条目 id 与剧集偏移
++     * 每部番剧只生成一次, 生成过就不再重新生成 (包括强制刮削与目录被移动后重建)
++     * 标记文件位于配置目录 bangumi_ini/ 下 以条目id命名 删除标记与ini后可重新生成
+      *
+      * @param ani   订阅
+-     * @param force 强制
++     * @param force 兼容上游签名 无实际作用 (有标记文件就不会重复生成)
+      */
+     public void saveBangumiIni(Ani ani, Boolean force) {
+-        Boolean bangumiIniEnabled = CONFIG.getBangumiIniEnabled();
+-        if (!bangumiIniEnabled) {
++        if (!Boolean.TRUE.equals(CONFIG.getBangumiIniEnabled())) {
+             // 未开启 bangumi.ini
+             return;
+         }
+ 
+-        String downloadPath = downloadService.getDownloadPath(ani);
++        String subjectId = BgmUtil.getSubjectId(ani);
++        if (StrUtil.isBlank(subjectId)) {
++            return;
++        }
+ 
+-        File file = new File(downloadPath, "bangumi.ini");
+-        if (!force) {
+-            if (file.exists()) {
+-                // 非强制模式
+-                return;
+-            }
++        // 生成标记 每部番剧只生成一次
++        File markerFile = new File(ConfigUtil.getConfigDir(), "bangumi_ini/" + subjectId);
++        if (markerFile.exists()) {
++            return;
+         }
+ 
+-        String subjectId = BgmUtil.getSubjectId(ani);
+-        Integer offset = ani.getOffset();
++        String downloadPath = downloadService.getDownloadPath(ani);
+ 
+-        String s = """
+-                [Bangumi]
+-                id={}
+-                offset={}
+-                """;
++        File downloadPathFile = new File(downloadPath);
++        if (!FileUtil.exist(downloadPathFile)) {
++            // 下载位置还不存在 等下载器创建目录后再生成
++            return;
++        }
+ 
+-        s = StrUtil.format(s, subjectId, offset);
++        // 季目录 条目id 与剧集偏移
++        File seasonFile = new File(downloadPathFile, "bangumi.ini");
++        if (!seasonFile.exists()) {
++            String seasonIni = StrFormatter.format(BANGUMI_INI_SEASON, subjectId,
++                    Optional.ofNullable(ani.getOffset()).orElse(0));
++            FileUtil.writeUtf8String(seasonIni, seasonFile);
++            log.info("已保存 {}", seasonFile);
++        }
+ 
+-        FileUtil.writeUtf8String(s, file);
++        if (Boolean.TRUE.equals(ani.getOva())) {
++            // 剧场版的下载位置就是影片目录 不再往上一层写
++            FileUtil.touch(markerFile);
++            return;
++        }
++
++        // 顶层 整剧条目id
++        File parentFile = downloadPathFile.getParentFile();
++        if (parentFile == null) {
++            return;
++        }
++        File rootFile = new File(parentFile, "bangumi.ini");
++        if (!rootFile.exists()) {
++            FileUtil.writeUtf8String(StrFormatter.format(BANGUMI_INI_ROOT, subjectId), rootFile);
++            log.info("已保存 {}", rootFile);
++        }
+ 
+-        log.info("已保存 {}", file);
++        FileUtil.touch(markerFile);
+     }
+ 
+ }
+diff --git a/ani-rss-application/src/main/java/ani/rss/service/UpdateService.java b/ani-rss-application/src/main/java/ani/rss/service/UpdateService.java
+index b66a038f..adfc51cb 100644
+--- a/ani-rss-application/src/main/java/ani/rss/service/UpdateService.java
++++ b/ani-rss-application/src/main/java/ani/rss/service/UpdateService.java
+@@ -40,7 +40,9 @@ public class UpdateService {
+ 
+             String filename = currentFile.isJar() ? "ani-rss.jar" : "ani-rss.exe";
+ 
+-            UpdateInfo updateInfo = githubService.getUpdateInfo("wushuo894", "ani-rss", filename, version);
++            // 更新源改为本仓库Release 由CI自动构建打补丁版本 版本号与上游保持一致
++            // 自动更新(定时任务)与设置-关于-更新(手动)都经由这里检测与下载
++            UpdateInfo updateInfo = githubService.getUpdateInfo("chen8945", "ani-rss-patch", filename, version);
+ 
+             BeanUtil.copyProperties(updateInfo, about, "version");
+         } catch (Exception e) {
+@@ -62,6 +64,7 @@ public class UpdateService {
+             return;
+         }
+ 
++        // 自构建版本 更新源指向本仓库Release 拉取的也是打过补丁的jar 补丁不会被覆盖
+         MavenUtils.CurrentFile currentFile = MavenUtils.getCurrentFile();
+ 
+         Assert.isTrue(currentFile.isFile(), "不支持更新");
+diff --git a/ani-rss-application/src/main/java/ani/rss/util/other/BgmUtil.java b/ani-rss-application/src/main/java/ani/rss/util/other/BgmUtil.java
+index 5d2bbc4d..ee976a92 100644
+--- a/ani-rss-application/src/main/java/ani/rss/util/other/BgmUtil.java
++++ b/ani-rss-application/src/main/java/ani/rss/util/other/BgmUtil.java
+@@ -82,7 +82,8 @@ public class BgmUtil {
+             title = StrFormatter.format("{} ({})", title, DateUtil.year(date));
+         }
+ 
+-        return TmdbUtils.getFinalName(title, tmdb);
++        // 使用bgm标题时 年份取bgm条目自身的播出年份(当季) 不使用tmdb整剧首播年份 只追加tmdbid后缀
++        return TmdbUtils.appendTmdbId(title, tmdb);
+     }
+ 
+     /**
+diff --git a/ani-rss-application/src/main/java/ani/rss/util/other/TmdbUtils.java b/ani-rss-application/src/main/java/ani/rss/util/other/TmdbUtils.java
+index 3e2e01aa..b93ba665 100644
+--- a/ani-rss-application/src/main/java/ani/rss/util/other/TmdbUtils.java
++++ b/ani-rss-application/src/main/java/ani/rss/util/other/TmdbUtils.java
+@@ -90,7 +90,20 @@ public class TmdbUtils {
+             title = RenameUtil.renameDel(title, false);
+             title = StrFormatter.format("{} ({})", title, DateUtil.year(tmdb.getDate()));
+         }
++        return appendTmdbId(title, tmdb);
++    }
+ 
++    /**
++     * 追加tmdbid后缀 不处理年份
++     *
++     * @param title 标题
++     * @param tmdb  tmdb
++     * @return 名称
++     */
++    public static String appendTmdbId(String title, Tmdb tmdb) {
++        if (Objects.isNull(tmdb)) {
++            return title;
++        }
+         boolean tmdbId = CONFIG.getTmdbId();
+         boolean tmdbIdPlexMode = CONFIG.getTmdbIdPlexMode();
+         if (tmdbId) {
+diff --git a/ani-rss-ui/src/view/config/AboutView.vue b/ani-rss-ui/src/view/config/AboutView.vue
+index b104ccaa..26f8a646 100644
+--- a/ani-rss-ui/src/view/config/AboutView.vue
++++ b/ani-rss-ui/src/view/config/AboutView.vue
+@@ -54,7 +54,7 @@
+     <div v-if="about.update">
+       <div>
+         <SettingsItem label="版本号">
+-          <el-link type="default" :href="`https://github.com/wushuo894/ani-rss/releases/tag/v${about.latest}`"
++          <el-link type="default" :href="`https://github.com/chen8945/ani-rss-patch/releases/tag/v${about.latest}`"
+                    target="_blank">
+             {{ about.latest }}
+           </el-link>
+diff --git a/ani-rss-ui/src/view/config/DownloadView.vue b/ani-rss-ui/src/view/config/DownloadView.vue
+index cd42bcbf..9a13d9b6 100644
+--- a/ani-rss-ui/src/view/config/DownloadView.vue
++++ b/ani-rss-ui/src/view/config/DownloadView.vue
+@@ -18,26 +18,42 @@
+             placeholder="http://192.168.1.x:8080"
+             autocomplete="new-password"/>
+       </SettingsItem>
+-      <SettingsItem v-if="props.config.downloadToolType === 'qBittorrent'" label="ApiKey">
+-        <el-input
+-            v-model.trim="props.config.downloadToolPassword"
+-            placeholder="qbt_xxxx"
+-            show-password
+-            autocomplete="new-password">
+-          <template #prefix>
+-            <el-icon class="el-input__icon">
+-              <Key/>
+-            </el-icon>
+-          </template>
+-        </el-input>
+-        <div v-if="!props.config.downloadToolPassword.startsWith('qbt_')" class="full-width margin-top-4">
+-          <el-alert show-icon type="warning" :closable="false">
+-            <template #title>
+-              ApiKey 未正确配置
++      <template v-if="props.config.downloadToolType === 'qBittorrent'">
++        <SettingsItem label="用户名">
++          <el-input
++              v-model.trim="props.config.downloadToolUsername"
++              placeholder="username (留空使用ApiKey)"
++              autocomplete="new-password">
++            <template #prefix>
++              <el-icon class="el-input__icon">
++                <User/>
++              </el-icon>
+             </template>
+-          </el-alert>
+-        </div>
+-      </SettingsItem>
++          </el-input>
++        </SettingsItem>
++        <SettingsItem :label="props.config.downloadToolUsername ? '密码' : 'ApiKey'">
++          <el-input
++              v-model.trim="props.config.downloadToolPassword"
++              :placeholder="props.config.downloadToolUsername ? 'password' : 'qbt_xxxx'"
++              show-password
++              autocomplete="new-password">
++            <template #prefix>
++              <el-icon class="el-input__icon">
++                <Key/>
++              </el-icon>
++            </template>
++          </el-input>
++          <div
++              v-if="!props.config.downloadToolUsername && !props.config.downloadToolPassword.startsWith('qbt_')"
++              class="full-width margin-top-4">
++            <el-alert show-icon type="warning" :closable="false">
++              <template #title>
++                ApiKey 未正确配置
++              </template>
++            </el-alert>
++          </div>
++        </SettingsItem>
++      </template>
+       <SettingsItem v-else-if="props.config.downloadToolType === 'Aria2'" label="RPC 密钥">
+         <el-input
+             v-model.trim="props.config.downloadToolPassword"
+diff --git a/ani-rss-ui/src/view/config/basic/RssView.vue b/ani-rss-ui/src/view/config/basic/RssView.vue
+index 367d294f..5ea36eac 100644
+--- a/ani-rss-ui/src/view/config/basic/RssView.vue
++++ b/ani-rss-ui/src/view/config/basic/RssView.vue
+@@ -3,7 +3,7 @@
+     <el-switch v-model:model-value="props.config.rss"/>
+   </SettingsItem>
+   <SettingsItem label="RSS间隔">
+-    <el-input-number v-model:model-value="props.config.rssSleepMinutes" :disabled="!props.config.rss" :min="10">
++    <el-input-number v-model:model-value="props.config.rssSleepMinutes" :disabled="!props.config.rss" :min="1">
+       <template #suffix>
+         <span>分钟</span>
+       </template>
+diff --git a/ani-rss-ui/src/view/config/basic/ScrapeView.vue b/ani-rss-ui/src/view/config/basic/ScrapeView.vue
+index a169ae96..3d4d2ef4 100644
+--- a/ani-rss-ui/src/view/config/basic/ScrapeView.vue
++++ b/ani-rss-ui/src/view/config/basic/ScrapeView.vue
+@@ -1,4 +1,13 @@
+ <template>
++  <SettingsItem label="bangumi.ini">
++    <div>
++      <el-checkbox label="启用" v-model="props.config['bangumiIniEnabled']"/>
++      <br/>
++      <el-text class="mx-1" size="small">
++        下载时自动生成 无需开启自动刮削
++      </el-text>
++    </div>
++  </SettingsItem>
+   <SettingsItem label="自动刮削">
+     <el-switch v-model="props.config['scrape']"/>
+   </SettingsItem>
+@@ -15,9 +24,6 @@
+       </el-text>
+     </div>
+   </SettingsItem>
+-  <SettingsItem label="更多">
+-    <el-checkbox label="bangumi.ini" v-model="props.config['bangumiIniEnabled']"/>
+-  </SettingsItem>
+   <SettingsItem label="TmdbApi">
+     <el-input v-model:model-value="props.config['tmdbApi']" placeholder="https://api.themoviedb.org"/>
+   </SettingsItem>
