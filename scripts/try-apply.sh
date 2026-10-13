@@ -3,14 +3,21 @@
 # 用法: scripts/try-apply.sh v3.2.48
 set -euo pipefail
 VERSION="${1:?用法: try-apply.sh v3.2.48}"
+if [[ $# -ne 1 || ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "版本格式必须为 vX.Y.Z，且只接受一个版本参数" >&2
+  exit 1
+fi
 cd "$(git rev-parse --show-toplevel)"
 ROOT=$PWD
 
-git fetch upstream --tags || echo "警告: fetch 失败(代理未开?), 使用本地已有的 tag 数据"
+# 只读取指定上游标签，保留本地发布标签；获取失败立即停止，避免验证错误基点
+git fetch --no-tags upstream "refs/tags/$VERSION"
+BASE=$(git rev-parse --verify 'FETCH_HEAD^{commit}')
 
 WT=$(mktemp -d)
-git worktree add -q --detach "$WT" "$VERSION"
-trap 'git worktree remove --force "$WT"' EXIT
+# worktree 创建失败时也清理 mktemp 留下的空目录
+trap 'git worktree remove --force "$WT" 2>/dev/null || rmdir "$WT"' EXIT
+git worktree add -q --detach "$WT" "$BASE"
 
 for p in $(ls patches/v*.patch | sort -rV); do
   if git -C "$WT" apply --check "$ROOT/$p"; then

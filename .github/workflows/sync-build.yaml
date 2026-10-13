@@ -43,7 +43,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/wushuo894/ani-rss
-          git fetch upstream --tags
+          # 本仓库同名标签指向补丁提交，允许覆盖 runner 本地标签以检出纯净上游版本
+          git fetch upstream --tags --force
 
           # 补丁暂存到仓库外 避免checkout上游tag后混入patch分支
           cp -r patches /tmp/patches
@@ -71,14 +72,6 @@ jobs:
           git tag -d "$version"
           git tag "$version"
 
-      - name: 推送分支与标签
-        if: env.SKIP != 'true'
-        run: |
-          # 先强推tag(重指向补丁提交) 连同上游对象一起送上去 供patch分支推送复用
-          git push --force origin "$version"
-          git push origin refs/remotes/upstream/main:refs/heads/ani-rss
-          git push origin patch --force
-
       - name: 安装 JDK 25
         if: env.SKIP != 'true'
         uses: actions/setup-java@v5
@@ -90,20 +83,6 @@ jobs:
       - name: 构建 jar/exe
         if: env.SKIP != 'true'
         run: bash ./package.sh
-
-      - name: 发布 Release
-        if: env.SKIP != 'true'
-        uses: softprops/action-gh-release@v3
-        with:
-          name: ${{ env.version }}
-          tag_name: ${{ env.version }}
-          body: 基于 [wushuo894/ani-rss](https://github.com/wushuo894/ani-rss) ${{ env.version }} 自动构建 包含本仓库补丁
-          body_path: UPDATE.md
-          append_body: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-          files: |
-            ./ani-rss-application/target/ani-rss.jar
-            ./ani-rss-application/target/ani-rss.exe
 
       - name: 安装 QEMU
         if: env.SKIP != 'true'
@@ -148,3 +127,29 @@ jobs:
             ghcr.io/chen8945/ani-rss:${{ env.version }}-openj9
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # 全部构建成功后再更新远端分支与标签，避免发布尚未构建成功的版本
+      - name: 推送分支与标签
+        if: env.SKIP != 'true'
+        run: |
+          # 先强推tag(重指向补丁提交) 连同上游对象一起送上去 供patch分支推送复用
+          git push --force origin "$version"
+          git push origin refs/remotes/upstream/main:refs/heads/ani-rss
+          git push origin patch --force
+
+      # Release 是版本检查的完成标志，最后发布以便镜像失败后可重试
+      - name: 发布 Release
+        if: env.SKIP != 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          name: ${{ env.version }}
+          tag_name: ${{ env.version }}
+          body: 基于 [wushuo894/ani-rss](https://github.com/wushuo894/ani-rss) ${{ env.version }} 自动构建 包含本仓库补丁
+          # 重试时覆盖同版本的更新说明，避免重复追加
+          body_path: UPDATE.md
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # 任一构建产物缺失即失败，避免不完整的 Release 被视为已完成
+          fail_on_unmatched_files: true
+          files: |
+            ./ani-rss-application/target/ani-rss.jar
+            ./ani-rss-application/target/ani-rss.exe

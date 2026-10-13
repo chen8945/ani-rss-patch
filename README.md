@@ -25,9 +25,13 @@
 每天一次（可手动触发）：
 
 1. 查询上游 `releases/latest`，与本仓库最新 Release 对比，相同则跳过；
-2. 检出上游该版本 tag，从新到旧应用第一个可用补丁，提交到 `patch` 分支并打同名 tag；
-3. `package.sh` 构建 jar/exe，发布 Release 并附 `ani-rss.jar`（应用内更新的下载源）；
-4. 构建并推送 Docker 镜像到 `ghcr.io/chen8945/ani-rss`（`latest` / `vX.Y.Z` 及 openj9 变体，amd64+arm64）。
+2. 检出上游该版本 tag，从新到旧应用第一个可用补丁，在本地提交到 `patch` 分支并打同名 tag；
+3. `package.sh` 构建 jar/exe；
+4. 构建并推送 Docker 镜像到 `ghcr.io/chen8945/ani-rss`（`latest` / `vX.Y.Z` 及 openj9 变体，amd64+arm64）；
+5. 全部构建成功后推送分支和版本 tag，最后发布 Release 并附 `ani-rss.jar` / `ani-rss.exe`。
+
+Release 作为版本检查的完成标志；构建或镜像发布失败时，不发布新 Release，重跑可继续构建该版本。
+CI 只处理上游最新 Release，不补发中间版本。例如本仓库为 `v3.2.47`、上游最新为 `v3.2.49` 时，会在 `v3.2.49` 源码上应用兼容补丁，成功后直接发布 `v3.2.49` 的 tag 和 Release。
 
 ## 应用内更新
 
@@ -35,8 +39,10 @@
 
 ## 本地工具
 
-- `scripts/gen-patch.sh vX.Y.Z`：从 main 分支执行（脚本只存在于 main），把 patch 分支上**已提交**的改动生成为 `patches/vX.Y.Z.patch`（内置 ani-rss 基点一致性校验）。
-- `scripts/try-apply.sh vX.Y.Z`：在临时 worktree 里测试现有补丁能否应用于指定上游版本，适配新版本前先跑它验证。
+- `scripts/gen-patch.sh vX.Y.Z`：从 main 分支执行，把 patch 分支上**已提交**的改动生成为 `patches/vX.Y.Z.patch`。从 upstream 获取指定版本，确认 `patch` 的父提交和 `ani-rss` 均为该版本后生成；成功才替换同名文件。
+- `scripts/try-apply.sh vX.Y.Z`：从 upstream 获取指定版本，在临时 worktree 里测试现有补丁能否应用；适配新版本前先跑它验证。
+
+两个脚本都保留本地发布标签；获取上游版本失败时会停止，需要能连接 upstream。
 
 ## 使用
 

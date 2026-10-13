@@ -23,19 +23,19 @@ description: 维护 ani-rss-patch 仓库的版本命名补丁。Use when a patch
 
 ## 适配流程
 
-1. **复现失败**：`git fetch upstream --tags` 后运行 `bash scripts/try-apply.sh vX.Y.Z`，确认哪些文件、哪些 hunk 失效。
+1. **复现失败**：运行 `bash scripts/try-apply.sh vX.Y.Z`，脚本会获取指定上游版本并验证补丁，保留本地发布标签；确认哪些文件、哪些 hunk 失效。获取上游版本失败时先恢复连接。
 2. **逐组分类**：对每个失效 hunk，回到 `PATCHES.md` 对应组，判定三类：
    - 上游已实现同等行为 → 该组从新补丁**删除**，并同步删除 PATCHES.md 中该组；
    - 上游结构变了但契约仍成立 → 按契约在新代码上重写该组；
    - 契约与上游新行为冲突、语义不明 → 停下来问用户，不要猜。
-3. **重演**：先把 ani-rss 镜像分支同步到目标版本（`git branch -f ani-rss upstream/main`），再 `git checkout -B patch vX.Y.Z` 基于目标 tag 重建，按契约逐组实现。
-4. **生成**：patch 分支提交"应用补丁"提交后切回 main，运行 `bash scripts/gen-patch.sh vX.Y.Z`（内部即 `git diff ani-rss patch`，带基点一致性校验；脚本只存在于 main 分支，只能从 main 运行）。
+3. **重演**：执行 `git fetch --no-tags upstream refs/tags/vX.Y.Z`，成功后用 `BASE=$(git rev-parse 'FETCH_HEAD^{commit}')` 固定上游基点；执行 `git branch -f ani-rss "$BASE"` 同步镜像，再 `git checkout -B patch "$BASE"` 重建，按契约逐组实现。
+4. **生成**：patch 分支提交"应用补丁"提交后切回 main，运行 `bash scripts/gen-patch.sh vX.Y.Z`。脚本会确认 `patch` 的父提交和 `ani-rss` 均为指定上游版本，再导出两者差异；生成成功才替换同名文件。
 5. **过验证门**，全部通过才算完成。
 
 ## 验证门
 
-- 干净检出目标 tag，`git apply --check` 通过（`scripts/try-apply.sh` 的职责）。
-- 树哈希往返：临时 worktree 检出目标 tag → 应用新补丁 → 提交后的树哈希必须与 `git rev-parse patch^{tree}` 完全一致。
+- 干净检出已确认的上游基点，`git apply --check` 通过（`scripts/try-apply.sh` 的职责）。
+- 树哈希往返：临时 worktree 检出上述上游基点 → 应用新补丁 → 提交后的树哈希必须与 `git rev-parse patch^{tree}` 完全一致。
 - 逐组核对：`PATCHES.md` 每一条契约都能在结果树中指认（grep 关键符号/注释），包括"应被删除的组确实不存在"。
 - patch 分支树中不含 `patches/` 目录（否则 CI 生成的补丁会自引用、树哈希对不上）。
 - 任一门未过不得交付；语义不明的问题上报用户。
