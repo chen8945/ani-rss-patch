@@ -1,4 +1,13 @@
 <template>
+  <SettingsItem label="bangumi.ini">
+    <div>
+      <el-checkbox label="启用" v-model="props.config['bangumiIniEnabled']"/>
+      <br/>
+      <el-text class="mx-1" size="small">
+        下载时自动生成 无需开启自动刮削
+      </el-text>
+    </div>
+  </SettingsItem>
   <SettingsItem label="自动刮削">
     <el-switch v-model="props.config['scrape']"/>
   </SettingsItem>
@@ -14,9 +23,6 @@
         自动强制刮削最近更新集的元数据
       </el-text>
     </div>
-  </SettingsItem>
-  <SettingsItem label="更多">
-    <el-checkbox label="bangumi.ini" v-model="props.config['bangumiIniEnabled']"/>
   </SettingsItem>
   <SettingsItem label="TmdbApi">
     <el-input v-model:model-value="props.config['tmdbApi']" placeholder="https://api.themoviedb.org"/>
