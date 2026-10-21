@@ -82,7 +82,8 @@ public class BgmUtil {
             title = StrFormatter.format("{} ({})", title, DateUtil.year(date));
         }
 
-        return TmdbUtils.getFinalName(title, tmdb);
+        // 使用bgm标题时 年份取bgm条目自身的播出年份(当季) 不使用tmdb整剧首播年份 只追加tmdbid后缀
+        return TmdbUtils.appendTmdbId(title, tmdb);
     }
 
     /**
