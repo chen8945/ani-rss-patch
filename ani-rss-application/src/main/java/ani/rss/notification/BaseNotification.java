@@ -108,11 +108,15 @@ public interface BaseNotification {
         notificationTemplate = notificationTemplate.replace("${month}", String.valueOf(month));
         notificationTemplate = notificationTemplate.replace("${date}", String.valueOf(date));
 
+        // 通知标题仅剥离 TMDB ID，保留年份；不改订阅名称和实际下载路径。
+        notificationTemplate = notificationTemplate.replace("${title}",
+                ReUtil.replaceAll(StrUtil.nullToEmpty(ani.getTitle()), StringEnum.TMDB_ID_REG, ""));
+        notificationTemplate = notificationTemplate.replace("${themoviedbName}",
+                ReUtil.replaceAll(StrUtil.nullToEmpty(ani.getThemoviedbName()), StringEnum.TMDB_ID_REG, ""));
+
         List<Func1<Ani, Object>> list = List.of(
-                Ani::getTitle,
                 Ani::getScore,
                 Ani::getSeason,
-                Ani::getThemoviedbName,
                 Ani::getBgmUrl,
                 Ani::getCurrentEpisodeNumber,
                 Ani::getTotalEpisodeNumber,
@@ -131,6 +135,11 @@ public interface BaseNotification {
                 .filter(StrUtil::isNotBlank)
                 .orElse("");
         notificationTemplate = notificationTemplate.replace("${tmdbid}", tmdbId);
+
+        // Bangumi ID 仅从已保存的条目链接提取，缺失时留空，不额外请求网络。
+        String bgmId = ReUtil.get("(?i)^https?://[^/?#\\s]+/subject/([0-9]+)/?(?:[?#].*)?$",
+                StrUtil.nullToEmpty(ani.getBgmUrl()).trim(), 1);
+        notificationTemplate = notificationTemplate.replace("${bgmid}", StrUtil.nullToEmpty(bgmId));
 
         String tmdbUrl = "";
         if (StrUtil.isNotBlank(tmdbId)) {

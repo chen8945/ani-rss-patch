@@ -83,6 +83,7 @@ public class qBittorrent implements BaseDownload {
     @Override
     public Boolean login(Boolean test, Config config) {
         String host = config.getDownloadToolHost();
+        String username = config.getDownloadToolUsername();
         String password = config.getDownloadToolPassword();
 
         if (StrUtil.isBlank(host) || StrUtil.isBlank(password)) {
@@ -90,16 +91,49 @@ public class qBittorrent implements BaseDownload {
             return false;
         }
 
-        if (!password.startsWith("qbt_")) {
-            log.warn("qBittorrent 未正确配置 ApiKey");
+        if (password.startsWith("qbt_")) {
+            // ApiKey 认证 (上游行为) qBittorrent 的 ApiKey 固定以 qbt_ 开头
+            try {
+                // 校验当前登录状态
+                return HttpReq.post(host + "/api/v2/app/version")
+                        .header(Header.AUTHORIZATION, "Bearer " + password)
+                        .thenFunction(HttpResponse::isOk);
+            } catch (Exception e) {
+                String message = ExceptionUtils.getMessage(e);
+                log.error("登录 qBittorrent 失败 {}", message);
+            }
+            return false;
+        }
+
+        // 账号密码认证 还原上游移除的登录方式 兼容未升级ApiKey的老版本qBittorrent
+        if (StrUtil.isBlank(username)) {
+            log.warn("qBittorrent 未配置用户名或ApiKey");
             return false;
         }
 
         try {
-            // 校验当前登录状态
-            return HttpReq.post(host + "/api/v2/app/version")
-                    .header(Header.AUTHORIZATION, "Bearer " + password)
-                    .thenFunction(HttpResponse::isOk);
+            if (!test) {
+                // 校验当前登录状态
+                Boolean isOk = HttpReq.post(host + "/api/v2/app/version")
+                        .thenFunction(HttpResponse::isOk);
+                if (isOk) {
+                    return true;
+                }
+            }
+
+            return HttpReq.post(host + "/api/v2/auth/login")
+                    .form("username", username)
+                    .form("password", password)
+                    .disableCookie()
+                    .thenFunction(res -> {
+                        HttpReq.assertStatus(res);
+                        String body = res.body();
+                        if (StrUtil.isBlank(body)) {
+                            // 在 5.2.0 后登录会响应空 body
+                            return true;
+                        }
+                        return "Ok.".equalsIgnoreCase(body);
+                    });
         } catch (Exception e) {
             String message = ExceptionUtils.getMessage(e);
             log.error("登录 qBittorrent 失败 {}", message);
@@ -493,16 +527,25 @@ public class qBittorrent implements BaseDownload {
 
     public static HttpRequest postApi(String path) {
         String downloadToolHost = CONFIG.getDownloadToolHost();
-        String downloadToolPassword = CONFIG.getDownloadToolPassword();
-        return HttpReq.post(downloadToolHost + path)
-                .header(Header.AUTHORIZATION, "Bearer " + downloadToolPassword);
+        return addAuth(HttpReq.post(downloadToolHost + path));
     }
 
     public static HttpRequest getApi(String path) {
         String downloadToolHost = CONFIG.getDownloadToolHost();
-        String downloadToolPassword = CONFIG.getDownloadToolPassword();
-        return HttpReq.get(downloadToolHost + path)
-                .header(Header.AUTHORIZATION, "Bearer " + downloadToolPassword);
+        return addAuth(HttpReq.get(downloadToolHost + path));
+    }
+
+    /**
+     * 附加认证
+     * ApiKey 固定以 qbt_ 开头 使用 Bearer 认证
+     * 账号密码模式 依赖登录后的会话Cookie 由全局CookieManager自动携带 不附加请求头
+     */
+    private static HttpRequest addAuth(HttpRequest req) {
+        String password = CONFIG.getDownloadToolPassword();
+        if (StrUtil.isNotBlank(password) && password.startsWith("qbt_")) {
+            return req.header(Header.AUTHORIZATION, "Bearer " + password);
+        }
+        return req;
     }
 
 }
