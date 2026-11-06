@@ -90,7 +90,20 @@ public class TmdbUtils {
             title = RenameUtil.renameDel(title, false);
             title = StrFormatter.format("{} ({})", title, DateUtil.year(tmdb.getDate()));
         }
+        return appendTmdbId(title, tmdb);
+    }
 
+    /**
+     * 追加tmdbid后缀 不处理年份
+     *
+     * @param title 标题
+     * @param tmdb  tmdb
+     * @return 名称
+     */
+    public static String appendTmdbId(String title, Tmdb tmdb) {
+        if (Objects.isNull(tmdb)) {
+            return title;
+        }
         boolean tmdbId = CONFIG.getTmdbId();
         boolean tmdbIdPlexMode = CONFIG.getTmdbIdPlexMode();
         if (tmdbId) {
