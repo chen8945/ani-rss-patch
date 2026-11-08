@@ -40,7 +40,9 @@ public class UpdateService {
 
             String filename = currentFile.isJar() ? "ani-rss.jar" : "ani-rss.exe";
 
-            UpdateInfo updateInfo = githubService.getUpdateInfo("wushuo894", "ani-rss", filename, version);
+            // 更新源改为本仓库Release 由CI自动构建打补丁版本 版本号与上游保持一致
+            // 自动更新(定时任务)与设置-关于-更新(手动)都经由这里检测与下载
+            UpdateInfo updateInfo = githubService.getUpdateInfo("chen8945", "ani-rss-patch", filename, version);
 
             BeanUtil.copyProperties(updateInfo, about, "version");
         } catch (Exception e) {
@@ -62,6 +64,7 @@ public class UpdateService {
             return;
         }
 
+        // 自构建版本 更新源指向本仓库Release 拉取的也是打过补丁的jar 补丁不会被覆盖
         MavenUtils.CurrentFile currentFile = MavenUtils.getCurrentFile();
 
         Assert.isTrue(currentFile.isFile(), "不支持更新");

@@ -18,26 +18,42 @@
             placeholder="http://192.168.1.x:8080"
             autocomplete="new-password"/>
       </SettingsItem>
-      <SettingsItem v-if="props.config.downloadToolType === 'qBittorrent'" label="ApiKey">
-        <el-input
-            v-model.trim="props.config.downloadToolPassword"
-            placeholder="qbt_xxxx"
-            show-password
-            autocomplete="new-password">
-          <template #prefix>
-            <el-icon class="el-input__icon">
-              <Key/>
-            </el-icon>
-          </template>
-        </el-input>
-        <div v-if="!props.config.downloadToolPassword.startsWith('qbt_')" class="full-width margin-top-4">
-          <el-alert show-icon type="warning" :closable="false">
-            <template #title>
-              ApiKey 未正确配置
+      <template v-if="props.config.downloadToolType === 'qBittorrent'">
+        <SettingsItem label="用户名">
+          <el-input
+              v-model.trim="props.config.downloadToolUsername"
+              placeholder="username (留空使用ApiKey)"
+              autocomplete="new-password">
+            <template #prefix>
+              <el-icon class="el-input__icon">
+                <User/>
+              </el-icon>
             </template>
-          </el-alert>
-        </div>
-      </SettingsItem>
+          </el-input>
+        </SettingsItem>
+        <SettingsItem :label="props.config.downloadToolUsername ? '密码' : 'ApiKey'">
+          <el-input
+              v-model.trim="props.config.downloadToolPassword"
+              :placeholder="props.config.downloadToolUsername ? 'password' : 'qbt_xxxx'"
+              show-password
+              autocomplete="new-password">
+            <template #prefix>
+              <el-icon class="el-input__icon">
+                <Key/>
+              </el-icon>
+            </template>
+          </el-input>
+          <div
+              v-if="!props.config.downloadToolUsername && !props.config.downloadToolPassword.startsWith('qbt_')"
+              class="full-width margin-top-4">
+            <el-alert show-icon type="warning" :closable="false">
+              <template #title>
+                ApiKey 未正确配置
+              </template>
+            </el-alert>
+          </div>
+        </SettingsItem>
+      </template>
       <SettingsItem v-else-if="props.config.downloadToolType === 'Aria2'" label="RPC 密钥">
         <el-input
             v-model.trim="props.config.downloadToolPassword"
