@@ -3,7 +3,7 @@
     <el-switch v-model:model-value="props.config.rss"/>
   </SettingsItem>
   <SettingsItem label="RSS间隔">
-    <el-input-number v-model:model-value="props.config.rssSleepMinutes" :disabled="!props.config.rss" :min="10">
+    <el-input-number v-model:model-value="props.config.rssSleepMinutes" :disabled="!props.config.rss" :min="1">
       <template #suffix>
         <span>分钟</span>
       </template>
