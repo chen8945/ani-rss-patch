@@ -12,6 +12,7 @@ import ani.rss.util.other.TmdbUtils;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.text.StrFormatter;
 import cn.hutool.core.util.ReUtil;
 import cn.hutool.core.util.StrUtil;
 import jakarta.annotation.Resource;
@@ -334,42 +335,83 @@ public class ScrapeService {
     }
 
     /**
+     * 季目录 bangumi.ini 内容格式
+     */
+    private static final String BANGUMI_INI_SEASON = """
+            [Bangumi]
+            id={}
+            offset={}
+            """;
+
+    /**
+     * 顶层 bangumi.ini 内容格式
+     */
+    private static final String BANGUMI_INI_ROOT = """
+            [Bangumi]
+            id={}
+            """;
+
+    /**
      * 保存 bangumi.ini
+     * 顶层保存整剧条目 id, 季目录保存条目 id 与剧集偏移
+     * 每部番剧只生成一次, 生成过就不再重新生成 (包括强制刮削与目录被移动后重建)
+     * 标记文件位于配置目录 bangumi_ini/ 下 以条目id命名 删除标记与ini后可重新生成
      *
      * @param ani   订阅
-     * @param force 强制
+     * @param force 兼容上游签名 无实际作用 (有标记文件就不会重复生成)
      */
     public void saveBangumiIni(Ani ani, Boolean force) {
-        Boolean bangumiIniEnabled = CONFIG.getBangumiIniEnabled();
-        if (!bangumiIniEnabled) {
+        if (!Boolean.TRUE.equals(CONFIG.getBangumiIniEnabled())) {
             // 未开启 bangumi.ini
+            return;
+        }
+
+        String subjectId = BgmUtil.getSubjectId(ani);
+        if (StrUtil.isBlank(subjectId)) {
+            return;
+        }
+
+        // 生成标记 每部番剧只生成一次
+        File markerFile = new File(ConfigUtil.getConfigDir(), "bangumi_ini/" + subjectId);
+        if (markerFile.exists()) {
             return;
         }
 
         String downloadPath = downloadService.getDownloadPath(ani);
 
-        File file = new File(downloadPath, "bangumi.ini");
-        if (!force) {
-            if (file.exists()) {
-                // 非强制模式
-                return;
-            }
+        File downloadPathFile = new File(downloadPath);
+        if (!FileUtil.exist(downloadPathFile)) {
+            // 下载位置还不存在 等下载器创建目录后再生成
+            return;
         }
 
-        String subjectId = BgmUtil.getSubjectId(ani);
-        Integer offset = ani.getOffset();
+        // 季目录 条目id 与剧集偏移
+        File seasonFile = new File(downloadPathFile, "bangumi.ini");
+        if (!seasonFile.exists()) {
+            String seasonIni = StrFormatter.format(BANGUMI_INI_SEASON, subjectId,
+                    Optional.ofNullable(ani.getOffset()).orElse(0));
+            FileUtil.writeUtf8String(seasonIni, seasonFile);
+            log.info("已保存 {}", seasonFile);
+        }
 
-        String s = """
-                [Bangumi]
-                id={}
-                offset={}
-                """;
+        if (Boolean.TRUE.equals(ani.getOva())) {
+            // 剧场版的下载位置就是影片目录 不再往上一层写
+            FileUtil.touch(markerFile);
+            return;
+        }
 
-        s = StrUtil.format(s, subjectId, offset);
+        // 顶层 整剧条目id
+        File parentFile = downloadPathFile.getParentFile();
+        if (parentFile == null) {
+            return;
+        }
+        File rootFile = new File(parentFile, "bangumi.ini");
+        if (!rootFile.exists()) {
+            FileUtil.writeUtf8String(StrFormatter.format(BANGUMI_INI_ROOT, subjectId), rootFile);
+            log.info("已保存 {}", rootFile);
+        }
 
-        FileUtil.writeUtf8String(s, file);
-
-        log.info("已保存 {}", file);
+        FileUtil.touch(markerFile);
     }
 
 }
