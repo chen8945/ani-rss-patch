@@ -29,7 +29,7 @@
 1. `githubService.getUpdateInfo("chen8945", "ani-rss-patch", filename, version)`——只改 owner/repo 两个字符串字面量并附注释，其余在线更新逻辑保持上游原样。
 2. 自动更新（`CronConfig` 定时任务）与手动更新（设置-关于）都经由 `about()`，改一处即全覆盖。
 3. 关于页更新弹窗"版本号"链接指向本仓库 Release：`https://github.com/chen8945/ani-rss-patch/releases/tag/v${about.latest}`。
-4. 前提不变量：CI 每个版本发布同名 tag 的 Release 并附 `ani-rss.jar` / `ani-rss.exe` 资产。
+4. 前提不变量：CI 每个版本发布同名 tag 的 Release 并附 `ani-rss.jar` 资产，跟随上游不再发布 EXE。
 
 ## 组 3：qBittorrent 双模式认证
 

@@ -82,7 +82,7 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: 构建 jar/exe
+      - name: 构建 JAR
         if: env.SKIP != 'true'
         run: bash ./package.sh
 
@@ -150,8 +150,7 @@ jobs:
           # 重试时覆盖同版本的更新说明，避免重复追加
           body_path: UPDATE.md
           token: ${{ secrets.GITHUB_TOKEN }}
-          # 任一构建产物缺失即失败，避免不完整的 Release 被视为已完成
+          # 跟随上游仅发布 JAR，缺失时失败，避免不完整的 Release 被视为已完成
           fail_on_unmatched_files: true
           files: |
             ./ani-rss-application/target/ani-rss.jar
-            ./ani-rss-application/target/ani-rss.exe

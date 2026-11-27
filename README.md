@@ -26,9 +26,9 @@
 
 1. 查询上游 `releases/latest`，与本仓库最新 Release 对比，相同则跳过；
 2. 检出上游该版本 tag，从新到旧应用第一个可用补丁，在本地提交到 `patch` 分支并打同名 tag；
-3. `package.sh` 构建 jar/exe；
+3. `package.sh` 构建 JAR；
 4. 构建并推送 Docker 镜像到 `ghcr.io/chen8945/ani-rss`（`latest` / `vX.Y.Z` 及 openj9 变体，amd64+arm64）；
-5. 全部构建成功后推送分支和版本 tag，最后发布 Release 并附 `ani-rss.jar` / `ani-rss.exe`。
+5. 全部构建成功后推送分支和版本 tag，最后发布 Release 并附 `ani-rss.jar`，跟随上游不再发布 EXE。
 
 Release 作为版本检查的完成标志；构建或镜像发布失败时，不发布新 Release，重跑可继续构建该版本。
 CI 只处理上游最新 Release，不补发中间版本。例如本仓库为 `v3.2.47`、上游最新为 `v3.2.49` 时，会在 `v3.2.49` 源码上应用兼容补丁，成功后直接发布 `v3.2.49` 的 tag 和 Release。
